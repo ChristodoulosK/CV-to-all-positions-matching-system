@@ -1,0 +1,730 @@
+# CV-Internship Matching System
+
+# ===== 1. INSTALL AND LOAD PACKAGES =====
+packages <- c("readxl", "pdftools", "dplyr", "tidyr", "stringr", "tidytext", 
+              "lsa", "quanteda", "stopwords", "textclean", "irlba")
+
+for(pkg in packages) {
+  if(!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+# ===== 2. LOAD DATA =====
+# Load internship positions from Excel file where you have stored the position names, descriptions, requirements and departments, each in a separate column
+internship_data <- readxl::read_excel("Internship departments.xlsx")
+
+# Clean column names
+names(internship_data) <- stringr::str_trim(names(internship_data))
+
+# Clean text in job descriptions
+internship_data$`Job description` <- stringr::str_replace_all(
+  internship_data$`Job description`, "\r\n", " "
+)
+internship_data$`Job requirements` <- stringr::str_replace_all(
+  internship_data$`Job requirements`, "\r\n", " "
+)
+
+# ===== 3. LOAD CVs =====
+# Load and process CVs from PDF files
+cv_directory <- "path to cvs"
+cv_files <- list.files(cv_directory, pattern = "\\.pdf$", full.names = TRUE)
+
+cvs <- list()
+
+for (file in cv_files) {
+  tryCatch({
+    cv_text <- pdftools::pdf_text(file)
+    cv_text <- paste(cv_text, collapse = " ")
+    
+    # Clean up text
+    cv_text <- stringr::str_replace_all(cv_text, "\\s+", " ")
+    cv_text <- stringr::str_trim(cv_text)
+    
+    file_name <- basename(file)
+    cvs[[file_name]] <- cv_text
+  }, error = function(e) {
+    warning(paste("Error processing file:", file, "Error:", e$message))
+  })
+}
+
+if (length(cvs) == 0) {
+  stop("No CV files found in the specified directory.")
+}
+
+# ===== 4. CREATE TAXONOMY =====
+# Create extensive skill taxonomy for matching. This is based on the departments my current company has, tailor to your specific case.
+# Technical skills - greatly expanded
+technical_skills <- c(
+  # Data & Analysis
+  "excel", "spreadsheet", "pivot table", "vlookup", "powerbi", "power bi", "tableau", "qlik",
+  "sql", "mysql", "postgresql", "oracle", "database", "data warehouse", "etl", "data lake",
+  "python", "r", "sas", "spss", "stata", "matlab", "data analysis", "analytics", "visualization",
+  "data mining", "data science", "machine learning", "ml", "ai", "artificial intelligence", 
+  "deep learning", "neural network", "natural language processing", "nlp", "computer vision",
+  "predictive modeling", "forecasting", "regression", "classification", "clustering",
+  "statistical analysis", "hypothesis testing", "a/b testing", "statistics", "probability",
+  "bi", "business intelligence", "data visualization", "dashboard", "reporting", "kpi",
+  
+  # Software & Development
+  "programming", "software development", "coding", "java", "javascript", "typescript", "cpp", 
+  "c#", ".net", "php", "html", "css", "react", "angular", "vue", "node.js", "ruby", "perl",
+  "scala", "kotlin", "swift", "go", "rust", "bash", "shell scripting", "powershell",
+  "git", "version control", "svn", "github", "gitlab", "bitbucket", "devops", "ci/cd",
+  "jenkins", "docker", "kubernetes", "aws", "azure", "gcp", "cloud computing", "serverless",
+  "microservices", "rest api", "soap", "graphql", "web services", "web development",
+  "front-end", "back-end", "full-stack", "mobile development", "ios", "android", "flutter",
+  
+  # Enterprise Systems
+  "erp", "crm", "sap", "oracle", "salesforce", "dynamics", "workday", "netsuite", "servicenow",
+  "jira", "confluence", "atlassian", "microsoft office", "ms office", "sharepoint", "onedrive",
+  "teams", "slack", "asana", "trello", "notion", "zoho", "hubspot", "zendesk", "freshdesk",
+  
+  # Technical Concepts & Methodologies
+  "agile", "scrum", "kanban", "waterfall", "lean", "six sigma", "itil", "togaf", "prince2", 
+  "pmp", "pmbok", "sdlc", "software development lifecycle", "uml", "api", "sdk", "testing",
+  "quality assurance", "qa", "test automation", "selenium", "cypress", "junit", "pytest",
+  "tdd", "bdd", "security", "cybersecurity", "penetration testing", "ethical hacking",
+  "encryption", "blockchain", "distributed systems", "parallel computing", "big data",
+  "hadoop", "spark", "kafka", "elasticsearch", "nosql", "data modeling", "erd",
+  
+  # Industry-Specific Tech
+  "cad", "computer-aided design", "revit", "autocad", "solidworks", "3d modeling", "gis",
+  "geographic information system", "plc", "scada", "iot", "internet of things", "rfid", 
+  "augmented reality", "ar", "virtual reality", "vr", "biotechnology", "bioinformatics"
+)
+
+# Business skills 
+business_skills <- c(
+  # General Management
+  "management", "leadership", "strategy", "strategic planning", "business planning", 
+  "strategic thinking", "business development", "business analysis", "process improvement",
+  "change management", "crisis management", "risk management", "business continuity",
+  "digital transformation", "innovation management", "product management", "program management",
+  "portfolio management", "project management", "pmo", "resource management", "stakeholder management",
+  "decision making", "problem solving", "critical thinking", "analytical thinking", "systems thinking",
+  
+  # Finance & Accounting
+  "finance", "financial analysis", "financial planning", "financial modeling", "financial reporting",
+  "budgeting", "forecasting", "p&l", "profit and loss", "balance sheet", "cash flow", "accounting",
+  "bookkeeping", "general ledger", "accounts payable", "accounts receivable", "tax", "audit",
+  "financial compliance", "sarbanes-oxley", "sox", "ifrs", "gaap", "cost accounting", "managerial accounting",
+  "investment analysis", "portfolio management", "asset management", "equity analysis", "valuation",
+  "mergers and acquisitions", "m&a", "due diligence", "venture capital", "private equity",
+  
+  # Marketing & Sales
+  "marketing", "digital marketing", "content marketing", "social media marketing", "email marketing",
+  "seo", "sem", "ppc", "display advertising", "affiliate marketing", "influencer marketing",
+  "brand management", "product marketing", "market research", "competitive analysis", "customer insights",
+  "marketing analytics", "marketing automation", "crm", "customer relationship management", 
+  "sales", "account management", "business development", "lead generation", "cold calling",
+  "sales funnel", "pipeline management", "sales forecasting", "negotiations", "contract management",
+  "customer success", "customer experience", "cx", "customer service", "customer support",
+  
+  # Supply Chain & Operations
+  "supply chain", "logistics", "inventory management", "warehouse management", "transportation management",
+  "fleet management", "distribution", "fulfillment", "procurement", "purchasing", "sourcing", 
+  "supplier management", "vendor management", "category management", "spend analysis", "cost saving", 
+  "cost reduction", "contract negotiation", "rfp", "rfq", "tendering", "bid management",
+  "operations", "operational excellence", "operations management", "production planning",
+  "manufacturing", "quality control", "quality assurance", "six sigma", "lean manufacturing",
+  "kaizen", "5s", "tqm", "total quality management", "process optimization", "productivity",
+  
+  # Human Resources
+  "human resources", "hr", "talent acquisition", "recruiting", "talent management", "succession planning",
+  "performance management", "compensation", "benefits", "payroll", "employee relations", "labor relations",
+  "hr compliance", "hr policies", "employee engagement", "employee experience", "organizational development",
+  "learning and development", "training", "coaching", "mentoring", "hr analytics", "workforce planning",
+  "diversity and inclusion", "dei", "employee wellness", "occupational health and safety",
+  
+  # Legal & Compliance
+  "legal", "compliance", "contracts", "intellectual property", "ip", "patents", "trademarks",
+  "copyright", "licensing", "regulatory compliance", "data privacy", "gdpr", "ccpa", "hipaa",
+  "risk assessment", "due diligence", "corporate governance", "esg", "environmental", "social",
+  "governance", "corporate social responsibility", "csr", "ethics", "business ethics"
+)
+
+# Soft skills -appreciated in my company, tailor to your case
+soft_skills <- c(
+  # Communication
+  "communication", "verbal communication", "written communication", "public speaking", "presentation",
+  "facilitation", "storytelling", "technical writing", "business writing", "copy writing", "content creation",
+  "active listening", "interpersonal communication", "persuasion", "influence", "negotiation", "mediation",
+  "conflict resolution", "public relations", "media relations", "cross-cultural communication",
+  
+  # Interpersonal
+  "teamwork", "collaboration", "team building", "relationship building", "networking", "interpersonal skills",
+  "emotional intelligence", "empathy", "compassion", "social awareness", "cultural awareness", "diversity",
+  "inclusion", "cultural sensitivity", "mentoring", "coaching", "feedback", "constructive criticism",
+  "diplomacy", "tact", "political savvy", "customer focus", "client relationship", "partnership building",
+  
+  # Leadership
+  "leadership", "people management", "team management", "delegation", "motivation", "inspiration",
+  "visioning", "strategic thinking", "decision making", "executive presence", "charisma", "influence",
+  "assertiveness", "confidence", "accountability", "responsibility", "ownership", "initiative", 
+  "entrepreneurship", "intrapreneurship", "change leadership", "thought leadership", "servant leadership",
+  "transformational leadership", "coaching leadership", "situational leadership",
+  
+  # Cognitive
+  "analytical", "critical thinking", "problem solving", "creative thinking", "innovation", "creativity",
+  "design thinking", "systems thinking", "strategic thinking", "conceptual thinking", "abstract thinking",
+  "logical reasoning", "quantitative reasoning", "data interpretation", "pattern recognition", "insight generation",
+  "judgment", "decision making", "prioritization", "planning", "cognitive flexibility", "intellectual curiosity",
+  
+  # Work Management
+  "organization", "organizational skills", "detail oriented", "attention to detail", "accuracy", "precision",
+  "time management", "punctuality", "deadline management", "multi-tasking", "task management", "project management",
+  "goal setting", "prioritization", "resource allocation", "efficiency", "productivity", "quality focus",
+  "continuous improvement", "process oriented", "methodical", "structured", "systematic",
+  
+  # Adaptability
+  "adaptability", "flexibility", "agility", "resilience", "stress management", "pressure management",
+  "change adaptability", "ambiguity tolerance", "uncertainty management", "open-mindedness", "learning agility",
+  "curiosity", "growth mindset", "self-development", "lifelong learning", "quick learner", "resourcefulness",
+  "innovation mindset", "creative problem solving", "improvisation", "crisis management",
+  
+  # Self-management
+  "self-motivation", "intrinsic motivation", "drive", "ambition", "determination", "perseverance", "grit",
+  "work ethic", "discipline", "self-discipline", "focus", "concentration", "mindfulness", "presence",
+  "self-awareness", "self-reflection", "self-regulation", "emotional control", "impulse control", "patience",
+  "integrity", "honesty", "ethics", "trustworthiness", "reliability", "dependability", "consistency",
+  "accountability", "ownership", "initiative", "proactivity", "self-direction", "autonomy", "independence",
+  
+  # Professional
+  "professionalism", "business etiquette", "professional appearance", "professional demeanor", "business acumen",
+  "commercial awareness", "industry knowledge", "professional development", "career management", "personal branding",
+  "networking", "relation building", "customer service", "client focus", "service orientation", "confidentiality",
+  "discretion", "ethical judgment", "work-life balance", "self-care", "stress management", "resilience"
+)
+
+# Languages
+languages <- c(
+  # Major languages
+  "english", "spanish", "french", "german", "italian", "portuguese", "dutch", "russian", "chinese", "mandarin",
+  "cantonese", "japanese", "korean", "arabic", "hindi", "urdu", "bengali", "punjabi", "turkish", "vietnamese",
+  "thai", "indonesian", "malay", "tagalog", "filipino", "swahili", "hebrew", "persian", "farsi", "greek",
+  "polish", "czech", "slovak", "hungarian", "romanian", "bulgarian", "serbian", "croatian", "ukrainian",
+  "swedish", "norwegian", "danish", "finnish", "icelandic", 
+  
+  # Proficiency indicators
+  "native", "bilingual", "fluent", "proficient", "conversational", "intermediate", "basic", "elementary", 
+  "beginner", "advanced", "business level", "professional working proficiency", "full professional proficiency",
+  "native or bilingual proficiency", "limited working proficiency", "elementary proficiency",
+  
+  # CEFR Levels
+  "c2", "c1", "b2", "b1", "a2", "a1", 
+  
+  # TOEFL/IELTS/Language testing
+  "toefl", "ielts", "toeic", "cambridge", "cae", "cpe", "fce", "dele", "dalf", "delf", "jlpt", "hsk"
+)
+
+taxonomy <- list(
+  technical = technical_skills,
+  business = business_skills,
+  soft = soft_skills,
+  languages = languages
+)
+
+# ===== 5. EXTRACT TEXT FROM CVs =====
+# Process CVs with text analysis to extract structured information
+structured_cvs <- list()
+
+for (cv_name in names(cvs)) {
+  cv_text <- cvs[[cv_name]]
+  
+  # Clean the text
+  clean_text <- textclean::replace_white(cv_text)
+  clean_text <- textclean::replace_non_ascii(clean_text)
+  
+  # Split text into sentences
+  sentences <- stringr::str_split(clean_text, "[.!?]\\s+|\\n+")[[1]]
+  sentences <- stringr::str_trim(sentences)
+  sentences <- sentences[sentences != ""]
+  
+  # Define keywords for different sections
+  education_keywords <- c("university", "college", "bachelor", "master", "phd", 
+                          "degree", "bsc", "msc", "education", "school", "institute",
+                          "diploma", "certification", "graduated", "study", "studies",
+                          "academic", "gpa", "grade", "major", "minor")
+  
+  work_keywords <- c("experience", "job", "intern", "position", "work", "company", 
+                     "employer", "role", "worked", "employed", "employment", "career",
+                     "responsibility", "duties", "manager", "assistant", "team lead",
+                     "project", "supervised", "coordinated", "developed", "created",
+                     "implemented", "achieved", "accomplished")
+  
+  skill_keywords <- c("skill", "proficient", "knowledge", "experience with", "familiar with",
+                      "expert in", "ability to", "certified", "trained in", "competent",
+                      "capable of", "specialization", "expertise", "proficiency", "fluent",
+                      "mastery", "advanced", "intermediate", "beginner", "basic")
+  
+  # Extract sentences that match each category
+  education_info <- sentences[sapply(sentences, function(s) {
+    any(sapply(education_keywords, function(kw) grepl(kw, tolower(s), fixed = TRUE)))
+  })]
+  
+  work_info <- sentences[sapply(sentences, function(s) {
+    any(sapply(work_keywords, function(kw) grepl(kw, tolower(s), fixed = TRUE)))
+  })]
+  
+  skill_info <- sentences[sapply(sentences, function(s) {
+    any(sapply(skill_keywords, function(kw) grepl(kw, tolower(s), fixed = TRUE)))
+  })]
+  
+  # Combine the sentences in each category
+  education_text <- paste(education_info, collapse = " ")
+  work_text <- paste(work_info, collapse = " ")
+  skill_text <- paste(skill_info, collapse = " ")
+  
+  # Store structured CV information
+  structured_cvs[[cv_name]] <- list(
+    full_text = clean_text,
+    education = education_text,
+    work_experience = work_text,
+    skills = skill_text
+  )
+}
+
+# ===== 6. SKILL-BASED MATCHING =====
+# Extract skills using the taxonomy
+extract_skills_from_text <- function(text, taxonomy) {
+  skills_found <- list()
+  
+  # Function to check for each skill in the text
+  check_skills <- function(skill_list) {
+    matches <- character(0)
+    
+    for (skill in skill_list) {
+      # Escape special regex characters before creating the pattern
+      escaped_skill <- gsub("([\\+\\*\\?\\^\\$\\.\\|\\(\\)\\[\\]\\{\\}\\\\])", "\\\\\\1", skill)
+      
+      # Look for the skill as a full word or part of a compound word
+      pattern <- paste0("\\b", escaped_skill, "\\b|\\b", escaped_skill, "s\\b|\\b", escaped_skill, "ing\\b")
+      found <- tryCatch({
+        any(grepl(pattern, tolower(text), perl = TRUE))
+      }, error = function(e) {
+        # If regex fails, try a simple string match as fallback
+        any(grepl(skill, tolower(text), fixed = TRUE))
+      })
+      
+      if (found) {
+        matches <- c(matches, skill)
+      }
+    }
+    
+    return(matches)
+  }
+  
+  # Check each skill category
+  skills_found$technical <- check_skills(taxonomy$technical)
+  skills_found$business <- check_skills(taxonomy$business)
+  skills_found$soft <- check_skills(taxonomy$soft)
+  skills_found$languages <- check_skills(taxonomy$languages)
+  
+  return(skills_found)
+}
+
+# Perform skill-based matching
+skill_matches <- list()
+
+for (cv_name in names(structured_cvs)) {
+  cv <- structured_cvs[[cv_name]]
+  cv_skills <- extract_skills_from_text(paste(cv$full_text, cv$skills, sep = " "), taxonomy)
+  
+  cv_matches <- data.frame(
+    position = character(),
+    score = numeric(),
+    technical_match = numeric(),
+    business_match = numeric(),
+    soft_match = numeric(),
+    language_match = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (i in 1:nrow(internship_data)) {
+    position_text <- paste(
+      internship_data$Role[i],
+      internship_data$`Job description`[i],
+      internship_data$`Job requirements`[i],
+      sep = " "
+    )
+    
+    position_skills <- extract_skills_from_text(position_text, taxonomy)
+    
+    # Calculate matches for each category
+    technical_match <- length(intersect(cv_skills$technical, position_skills$technical)) / 
+      max(1, length(position_skills$technical))
+    
+    business_match <- length(intersect(cv_skills$business, position_skills$business)) / 
+      max(1, length(position_skills$business))
+    
+    soft_match <- length(intersect(cv_skills$soft, position_skills$soft)) / 
+      max(1, length(position_skills$soft))
+    
+    language_match <- length(intersect(cv_skills$languages, position_skills$languages)) / 
+      max(1, length(position_skills$languages))
+    
+    # Calculate overall score (equal weights for now)
+    overall_score <- (technical_match + business_match + soft_match + language_match) / 4
+    
+    cv_matches <- rbind(cv_matches, data.frame(
+      position = internship_data$Role[i],
+      score = overall_score,
+      technical_match = technical_match,
+      business_match = business_match,
+      soft_match = soft_match,
+      language_match = language_match,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  # Sort by score
+  cv_matches <- cv_matches[order(cv_matches$score, decreasing = TRUE), ]
+  skill_matches[[cv_name]] <- cv_matches
+}
+
+# ===== 7. LSA-BASED MATCHING =====
+# Perform Latent Semantic Analysis
+# Combine all text documents for LSA
+all_docs <- c()
+
+# Add CVs
+for (cv_name in names(structured_cvs)) {
+  all_docs <- c(all_docs, structured_cvs[[cv_name]]$full_text)
+}
+
+# Add internship positions
+for (i in 1:nrow(internship_data)) {
+  position_text <- paste(
+    internship_data$Role[i],
+    internship_data$`Job description`[i],
+    internship_data$`Job requirements`[i],
+    sep = " "
+  )
+  all_docs <- c(all_docs, position_text)
+}
+
+# Create document-term matrix
+tokenized_docs <- lapply(all_docs, function(doc) {
+  doc %>%
+    stringr::str_to_lower() %>%
+    stringr::str_replace_all("[^[:alnum:][:space:]]", "") %>%
+    stringr::str_split("\\s+") %>%
+    unlist()
+})
+
+# Create vocabulary
+vocab <- unique(unlist(tokenized_docs))
+vocab <- vocab[nchar(vocab) > 2]  # Filter out very short tokens
+
+# Create document-term matrix
+dtm <- matrix(0, nrow = length(all_docs), ncol = length(vocab))
+colnames(dtm) <- vocab
+
+for (i in 1:length(all_docs)) {
+  tokens <- tokenized_docs[[i]]
+  tokens <- tokens[tokens %in% vocab]
+  token_counts <- table(tokens)
+  
+  # Make sure token names exist in the vocabulary
+  valid_tokens <- names(token_counts)[names(token_counts) %in% vocab]
+  
+  if (length(valid_tokens) > 0) {
+    dtm[i, valid_tokens] <- token_counts[valid_tokens]
+  }
+}
+
+# TF-IDF transformation
+# Term frequency
+tf <- dtm / (rowSums(dtm) + 1e-10)  # Add small number to avoid division by zero
+# Inverse document frequency
+idf <- log(nrow(dtm) / (colSums(dtm > 0) + 1))
+# TF-IDF matrix
+tfidf <- sweep(tf, 2, idf, "*")
+
+# Perform SVD
+# Ensure nv is not greater than the minimum dimension of tfidf
+nv <- min(50, min(dim(tfidf)) - 1)
+svd_result <- irlba::irlba(tfidf, nv = nv)
+
+# Document vectors in LSA space
+doc_vectors <- svd_result$u %*% diag(svd_result$d)
+
+# Split results back into CVs and positions
+cv_vectors <- doc_vectors[1:length(structured_cvs), ]
+position_vectors <- doc_vectors[(length(structured_cvs) + 1):nrow(doc_vectors), ]
+
+# Calculate similarities
+lsa_matches <- list()
+
+for (i in 1:length(structured_cvs)) {
+  cv_name <- names(structured_cvs)[i]
+  cv_vector <- cv_vectors[i, ]
+  
+  similarities <- rep(0, nrow(position_vectors))
+  for (j in 1:nrow(position_vectors)) {
+    position_vector <- position_vectors[j, ]
+    # Cosine similarity
+    cos_sim <- sum(cv_vector * position_vector) / 
+      (sqrt(sum(cv_vector^2)) * sqrt(sum(position_vector^2)) + 1e-10)  # Add small number to avoid division by zero
+    similarities[j] <- cos_sim
+  }
+  
+  cv_matches <- data.frame(
+    position = internship_data$Role,
+    similarity = similarities,
+    stringsAsFactors = FALSE
+  )
+  
+  # Sort by similarity
+  cv_matches <- cv_matches[order(cv_matches$similarity, decreasing = TRUE), ]
+  lsa_matches[[cv_name]] <- cv_matches
+}
+
+# ===== 8. COMBINE MATCHING APPROACHES =====
+# Define weights for each approach
+weights <- list(
+  skill = 0.5,  # Increased weight since we're only using two methods
+  lsa = 0.5     # Increased weight since we're only using two methods
+)
+
+combined_matches <- list()
+
+for (cv_name in names(skill_matches)) {
+  skill_df <- skill_matches[[cv_name]]
+  lsa_df <- lsa_matches[[cv_name]]
+  
+  # Create a combined dataframe
+  positions <- unique(c(skill_df$position, lsa_df$position))
+  
+  combined_df <- data.frame(
+    position = positions,
+    skill_score = 0,
+    lsa_score = 0,
+    total_score = 0,
+    stringsAsFactors = FALSE
+  )
+  
+  # Fill in the scores
+  for (i in 1:nrow(combined_df)) {
+    pos <- combined_df$position[i]
+    
+    # Skill score
+    skill_row <- skill_df[skill_df$position == pos, ]
+    combined_df$skill_score[i] <- if (nrow(skill_row) > 0) skill_row$score else 0
+    
+    # LSA score
+    lsa_row <- lsa_df[lsa_df$position == pos, ]
+    combined_df$lsa_score[i] <- if (nrow(lsa_row) > 0) lsa_row$similarity else 0
+    
+    # Weighted total
+    combined_df$total_score[i] <- 
+      weights$skill * combined_df$skill_score[i] +
+      weights$lsa * combined_df$lsa_score[i]
+  }
+  
+  # Sort by total score
+  combined_df <- combined_df[order(combined_df$total_score, decreasing = TRUE), ]
+  combined_matches[[cv_name]] <- combined_df
+}
+
+# ===== 9. DISPLAY RESULTS =====
+# Output top 10 matches for each CV
+cat("\nTop matches for each CV:\n")
+cat("=======================\n")
+for (cv_name in names(combined_matches)) {
+  cat("\nCandidate:", cv_name, "\n")
+  top_matches <- head(combined_matches[[cv_name]], 10)  # Show top 10 matches
+  
+  for (i in 1:nrow(top_matches)) {
+    cat(sprintf("%d. %s (Score: %.2f%%)\n", 
+                i, 
+                top_matches$position[i], 
+                top_matches$total_score[i] * 100))
+    cat(sprintf("   Skill Match: %.2f%%, Topic Match: %.2f%%\n",
+                top_matches$skill_score[i] * 100,
+                top_matches$lsa_score[i] * 100))
+  }
+}
+
+# Show skill breakdown for best matches
+cat("\n\nSkill Breakdown for Top Matches:\n")
+cat("===============================\n")
+
+for (cv_name in names(combined_matches)) {
+  cat("\nCandidate:", cv_name, "\n")
+  best_position <- combined_matches[[cv_name]]$position[1]
+  
+  # Get CV skills
+  cv <- structured_cvs[[cv_name]]
+  cv_skills <- extract_skills_from_text(paste(cv$full_text, cv$skills, sep = " "), taxonomy)
+  
+  # Get position skills
+  position_row <- internship_data[internship_data$Role == best_position, ]
+  position_text <- paste(
+    position_row$Role,
+    position_row$`Job description`,
+    position_row$`Job requirements`,
+    sep = " "
+  )
+  position_skills <- extract_skills_from_text(position_text, taxonomy)
+  
+  # Display matching skills
+  cat("Best matching position:", best_position, "\n\n")
+  
+  cat("Technical Skills:\n")
+  matching_tech <- intersect(cv_skills$technical, position_skills$technical)
+  missing_tech <- setdiff(position_skills$technical, cv_skills$technical)
+  cat("  Matched:", paste(matching_tech, collapse = ", "), "\n")
+  if (length(missing_tech) > 0) {
+    cat("  Missing:", paste(missing_tech, collapse = ", "), "\n")
+  }
+  
+  cat("\nBusiness Skills:\n")
+  matching_bus <- intersect(cv_skills$business, position_skills$business)
+  missing_bus <- setdiff(position_skills$business, cv_skills$business)
+  cat("  Matched:", paste(matching_bus, collapse = ", "), "\n")
+  if (length(missing_bus) > 0) {
+    cat("  Missing:", paste(missing_bus, collapse = ", "), "\n")
+  }
+  
+  cat("\nSoft Skills:\n")
+  matching_soft <- intersect(cv_skills$soft, position_skills$soft)
+  missing_soft <- setdiff(position_skills$soft, cv_skills$soft)
+  cat("  Matched:", paste(matching_soft, collapse = ", "), "\n")
+  if (length(missing_soft) > 0) {
+    cat("  Missing:", paste(missing_soft, collapse = ", "), "\n")
+  }
+  
+  cat("\nLanguages:\n")
+  matching_lang <- intersect(cv_skills$languages, position_skills$languages)
+  missing_lang <- setdiff(position_skills$languages, cv_skills$languages)
+  cat("  Matched:", paste(matching_lang, collapse = ", "), "\n")
+  if (length(missing_lang) > 0) {
+    cat("  Missing:", paste(missing_lang, collapse = ", "), "\n")
+  }
+  
+  cat("\n", strrep("-", 50), "\n\n", sep = "")
+}
+
+# ===== 10. GENERATE DETAILED SKILL MATCHING TABLE =====
+generate_skill_matching_table <- function(combined_matches, structured_cvs, internship_data, taxonomy) {
+  skill_matching_table <- list()
+  
+  for (cv_name in names(combined_matches)) {
+    # Get the top matches for this CV
+    top_matches <- head(combined_matches[[cv_name]], 10)
+    
+    # Prepare a list to store detailed skill matches for this CV
+    cv_skill_matches <- list()
+    
+    # Get CV skills
+    cv <- structured_cvs[[cv_name]]
+    cv_skills <- extract_skills_from_text(paste(cv$full_text, cv$skills, sep = " "), taxonomy)
+    
+    # Process each top match
+    for (i in 1:nrow(top_matches)) {
+      # Find the matching position details
+      position_row <- internship_data[internship_data$Role == top_matches$position[i], ]
+      position_text <- paste(
+        position_row$Role,
+        position_row$`Job description`,
+        position_row$`Job requirements`,
+        sep = " "
+      )
+      position_skills <- extract_skills_from_text(position_text, taxonomy)
+      
+      # Create a detailed skill match record
+      skill_match_record <- list(
+        position = top_matches$position[i],
+        total_score = top_matches$total_score[i],
+        skill_score = top_matches$skill_score[i],
+        lsa_score = top_matches$lsa_score[i],
+        technical_skills = list(
+          matched = intersect(cv_skills$technical, position_skills$technical),
+          missing = setdiff(position_skills$technical, cv_skills$technical)
+        ),
+        business_skills = list(
+          matched = intersect(cv_skills$business, position_skills$business),
+          missing = setdiff(position_skills$business, cv_skills$business)
+        ),
+        soft_skills = list(
+          matched = intersect(cv_skills$soft, position_skills$soft),
+          missing = setdiff(position_skills$soft, cv_skills$soft)
+        ),
+        languages = list(
+          matched = intersect(cv_skills$languages, position_skills$languages),
+          missing = setdiff(position_skills$languages, cv_skills$languages)
+        )
+      )
+      
+      cv_skill_matches[[i]] <- skill_match_record
+    }
+    
+    skill_matching_table[[cv_name]] <- cv_skill_matches
+  }
+  
+  return(skill_matching_table)
+}
+
+# Generate the skill matching table
+skill_matching_table <- generate_skill_matching_table(combined_matches, structured_cvs, internship_data, taxonomy)
+
+# ===== 11. PRINT DETAILED SKILL MATCHING TABLE =====
+print_skill_matching_table <- function(skill_matching_table) {
+  cat("\nDetailed Skill Matching Table\n")
+  cat("==============================\n\n")
+  
+  for (cv_name in names(skill_matching_table)) {
+    cat("Candidate:", cv_name, "\n")
+    cat(strrep("-", 50), "\n")
+    
+    cv_matches <- skill_matching_table[[cv_name]]
+    
+    for (i in 1:length(cv_matches)) {
+      match <- cv_matches[[i]]
+      
+      cat(sprintf("Position %d: %s\n", i, match$position))
+      cat(sprintf("Total Match Score: %.2f%% (Skill: %.2f%%, Topic: %.2f%%)\n\n", 
+                  match$total_score * 100, 
+                  match$skill_score * 100, 
+                  match$lsa_score * 100))
+      
+      # Technical Skills
+      cat("Technical Skills:\n")
+      cat("  Matched:", paste(match$technical_skills$matched, collapse = ", "), "\n")
+      if (length(match$technical_skills$missing) > 0) {
+        cat("  Missing:", paste(match$technical_skills$missing, collapse = ", "), "\n")
+      }
+      
+      # Business Skills
+      cat("\nBusiness Skills:\n")
+      cat("  Matched:", paste(match$business_skills$matched, collapse = ", "), "\n")
+      if (length(match$business_skills$missing) > 0) {
+        cat("  Missing:", paste(match$business_skills$missing, collapse = ", "), "\n")
+      }
+      
+      # Soft Skills
+      cat("\nSoft Skills:\n")
+      cat("  Matched:", paste(match$soft_skills$matched, collapse = ", "), "\n")
+      if (length(match$soft_skills$missing) > 0) {
+        cat("  Missing:", paste(match$soft_skills$missing, collapse = ", "), "\n")
+      }
+      
+      # Languages
+      cat("\nLanguages:\n")
+      cat("  Matched:", paste(match$languages$matched, collapse = ", "), "\n")
+      if (length(match$languages$missing) > 0) {
+        cat("  Missing:", paste(match$languages$missing, collapse = ", "), "\n")
+      }
+      
+      cat("\n", strrep("-", 50), "\n\n", sep = "")
+    }
+    
+    cat("\n", strrep("=", 70), "\n\n", sep = "")
+  }
+}
+
+# Print the detailed skill matching table
+print_skill_matching_table(skill_matching_table)
